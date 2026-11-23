@@ -1,0 +1,47 @@
+# Public front for DBHub on Railway. DBHub listens only on 127.0.0.1 and also
+# checks the bearer token itself.
+{
+	admin off
+	auto_https off
+	persist_config off
+	servers {
+		trusted_proxies static private_ranges 100.64.0.0/10
+	}
+}
+
+:{$PORT:8080} {
+	# Railway's health check: no token needed. Answered by DBHub itself.
+	@health {
+		method GET HEAD
+		path /healthz
+	}
+	handle @health {
+		reverse_proxy 127.0.0.1:{$DBHUB_INTERNAL_PORT:8081} {
+			header_up Host 127.0.0.1:{$DBHUB_INTERNAL_PORT:8081}
+		}
+	}
+
+	# MCP clients (Claude, Cursor, VS Code...) and scripts: Authorization: Bearer DBHUB_AUTH_TOKEN.
+	@bearer header Authorization "Bearer {$DBHUB_AUTH_TOKEN}"
+	handle @bearer {
+		reverse_proxy 127.0.0.1:{$DBHUB_INTERNAL_PORT:8081} {
+			header_up Host 127.0.0.1:{$DBHUB_INTERNAL_PORT:8081}
+			header_up -Origin
+			flush_interval -1
+		}
+	}
+
+	# Browser workbench: basic auth (WORKBENCH_USERNAME / WORKBENCH_PASSWORD),
+	# then the token is added for DBHub.
+	handle {
+		basic_auth {
+			{$WORKBENCH_USERNAME} {$WORKBENCH_PASSWORD_HASH}
+		}
+		reverse_proxy 127.0.0.1:{$DBHUB_INTERNAL_PORT:8081} {
+			header_up Host 127.0.0.1:{$DBHUB_INTERNAL_PORT:8081}
+			header_up -Origin
+			header_up Authorization "Bearer {$DBHUB_AUTH_TOKEN}"
+			flush_interval -1
+		}
+	}
+}
